@@ -1,16 +1,18 @@
 import { Button, Group, Stack } from "@mantine/core"
 import "./App.css"
 import { useState } from "react"
-import type { Piece, PieceOnTray } from "./core/type.ts"
+import type { Piece, PieceOnTray, ThinkResponse } from "./core/type.ts"
 import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
+import { PoxThinkV1 } from "./poxThinkv1.ts"
 
 
 function App() {
 
   const [piecesOnTray, setPiecesOnTray] = useState<PieceOnTray[]>(defaultValues)
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
+  const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
 
   console.log( piecesOnTray )
 
@@ -38,7 +40,11 @@ function App() {
        {chessTray.map((lane, i) => (
          <Group gap={2} key={i}>
            {lane.map((place, i2) => {
-             return <Stack onClick={() => {
+
+             const isBlackThink = think?.black?.position === place || think?.black?.oldPosition === place
+             const isWhiteThink = think?.white?.position === place|| think?.white?.oldPosition === place
+
+             return <Stack bg={isBlackThink ? "red" : isWhiteThink ? "green" : undefined} onClick={() => {
                addPiece({posX: i2, posY: i, position: place})
              }} align={"center"} justify={"center"} key={i2} style={{border: "1px solid black", cursor: "pointer"}} h={50} w={50} >
                {piecesOnTray.find(p => p.position === place)?.element}
@@ -70,6 +76,9 @@ function App() {
            )
          })}
        </Group>
+       <Button onClick={() => setThink(PoxThinkV1(piecesOnTray))}>
+         THINK
+       </Button>
      </Stack>
 
    </Stack>

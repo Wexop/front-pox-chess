@@ -1,8 +1,8 @@
 import { CavalierPiece, FouPiece, PionPiece, QueenPiece, RoiPiece, TourPiece } from "../components/chessPieces.tsx"
-import { GameColor } from "./type.ts"
+import { GameColor, type PieceOnTray } from "./type.ts"
 
 
-export const defaultValues = [
+export const defaultValues: PieceOnTray[] = [
   {
     "name": "pion",
     "element": <PionPiece color={GameColor.BLACK}/>,

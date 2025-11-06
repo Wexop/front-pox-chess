@@ -22,3 +22,12 @@ export type Piece = {
 }
 
 export type PieceOnTray = Piece & {position: string, posX: number, posY: number}
+
+export type ThinkResponse = {
+  black: {
+    index: number, posX: number, posY: number, position: string, oldPosition: string
+  },
+  white: {
+    index: number, posX: number, posY: number, position: string, oldPosition: string
+  }
+}
