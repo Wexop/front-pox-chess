@@ -61,7 +61,6 @@ const applyMove = (pieces: PieceOnTray[], move: { fromIndex: number, toX: number
     const newPieces = pieces.map(p => ({ ...p }));
     const pieceToMove = { ...newPieces[move.fromIndex] };
 
-    // Efficiently remove the captured piece
     const targetIndex = newPieces.findIndex(p => p.posX === move.toX && p.posY === move.toY);
     if (targetIndex !== -1) {
         newPieces.splice(targetIndex, 1);
@@ -199,18 +198,17 @@ const getTrayScoreV4 = (pieces: PieceOnTray[], color: GameColor) => {
         }
     }
 
-    // King safety evaluation
     if (myKing) {
         const enemyMoves = getAllMovesForColor(pieces, opposite(color));
         let attackers = 0;
         for (const move of enemyMoves) {
             const dx = Math.abs(myKing.posX - move.toX);
             const dy = Math.abs(myKing.posY - move.toY);
-            if (dx <= 2 && dy <= 2) { // If move is near the king
+            if (dx <= 2 && dy <= 2) { 
                 attackers++;
             }
         }
-        score -= attackers * 10; // Penalty for each enemy piece near the king
+        score -= attackers * 10; 
     }
 
     return score;
@@ -218,7 +216,7 @@ const getTrayScoreV4 = (pieces: PieceOnTray[], color: GameColor) => {
 
 const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: number, currentColor: GameColor, maximizingColor: GameColor, startTime: number): number => {
     if (Date.now() - startTime > MAX_SEARCH_TIME) {
-        return 0; // Time's up
+        return 0; 
     }
 
     const positionKey = generatePositionKey(pieces);
@@ -238,8 +236,8 @@ const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: nu
 
     const moves = getAllMovesForColor(pieces, currentColor);
     if (moves.length === 0) {
-        if (isKingInCheck(pieces, currentColor)) return -99999 - depth; // Checkmate
-        return 0; // Stalemate
+        if (isKingInCheck(pieces, currentColor)) return -99999 - depth; 
+        return 0; 
     }
 
     const movesToSearch = moves.slice(0, BEAM_WIDTH);
@@ -271,16 +269,16 @@ const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: nu
     }
 };
 
-export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5): ThinkResponse => {
+export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5, thinkForColor: 'white' | 'black' | 'both' = 'both'): ThinkResponse => {
     const thinkFor = (color: GameColor) => {
         const startTime = Date.now();
         let bestMove: any = null;
-        let bestScore = -Infinity;
 
         const moves = getAllMovesForColor(pieces, color);
-        if(moves.length === 0) return {}; // No moves available
+        if(moves.length === 0) return undefined;
 
-        // Iterative Deepening
+        bestMove = moves[0];
+
         for (let depth = 1; depth <= maxDepth; depth++) {
             let currentBestMoveForDepth: any = null;
             let currentBestScoreForDepth = -Infinity;
@@ -299,16 +297,12 @@ export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5): ThinkResponse =
 
             if (Date.now() - startTime > MAX_SEARCH_TIME) {
                 console.log(`Time limit reached at depth ${depth}`);
-                break; // Exit iterative deepening loop
+                break; 
             }
             
-            // If search for this depth completed, update the overall best move
-            bestMove = currentBestMoveForDepth;
-            bestScore = currentBestScoreForDepth;
+            if(currentBestMoveForDepth) bestMove = currentBestMoveForDepth;
         }
         
-        if (!bestMove) bestMove = moves[0]; // Failsafe
-
         const p = pieces[bestMove.fromIndex];
         return {
             index: bestMove.fromIndex,
@@ -319,9 +313,13 @@ export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5): ThinkResponse =
         };
     };
 
-    transpositionTable.clear(); // Clear cache for each new top-level call
-    return {
-        white: thinkFor(GameColor.WHITE),
-        black: thinkFor(GameColor.BLACK)
-    };
+    transpositionTable.clear();
+    const response: ThinkResponse = {};
+    if (thinkForColor === 'white' || thinkForColor === 'both') {
+        response.white = thinkFor(GameColor.WHITE);
+    }
+    if (thinkForColor === 'black' || thinkForColor === 'both') {
+        response.black = thinkFor(GameColor.BLACK);
+    }
+    return response;
 };

@@ -1,4 +1,4 @@
-import { Button, Group, NumberInput, Stack, TextInput } from "@mantine/core"
+import { Button, Group, NumberInput, SegmentedControl, Stack, TextInput } from "@mantine/core"
 import "./App.css"
 import { useEffect, useState } from "react"
 import { type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
@@ -17,6 +17,7 @@ function App() {
   const [deepth, setDeepth] = useState<number>(5) // Default to a higher depth for V4
   const [fen, setFen] = useState<string>("")
   const [autoLoop, setAutoLoop] = useState<boolean>(false)
+  const [thinkForColor, setThinkForColor] = useState<'white' | 'black' | 'both'>('both');
 
   const getFen = async () => {
     const res = await fetch('http://localhost:4000/fen');
@@ -38,8 +39,8 @@ function App() {
 
   useEffect(() => {
     if (piecesOnTray.length === 0) return;
-    doThinkAsync(piecesOnTray, deepth).then(setThink);
-  }, [piecesOnTray, deepth]);
+    doThinkAsync(piecesOnTray, deepth, thinkForColor).then(setThink);
+  }, [piecesOnTray, deepth, thinkForColor]);
 
 
   const chessTray = [
@@ -82,11 +83,10 @@ function App() {
 
   }
 
-  const doThinkAsync = async (pieces: PieceOnTray[], depth: number) => {
+  const doThinkAsync = async (pieces: PieceOnTray[], depth: number, thinkFor: 'white' | 'black' | 'both') => {
     return new Promise<ThinkResponse>((resolve) => {
-      // Use a timeout to ensure the UI remains responsive
       setTimeout(() => {
-        const result = PoxThinkV4(pieces, depth);
+        const result = PoxThinkV4(pieces, depth, thinkFor);
         resolve(result);
       });
     });
@@ -122,6 +122,15 @@ function App() {
 
             }}>AUTO LOOP FEN</Button>
         </Group>
+        <SegmentedControl
+            value={thinkForColor}
+            onChange={(value) => setThinkForColor(value as 'white' | 'black' | 'both')}
+            data={[
+                { label: 'White', value: 'white' },
+                { label: 'Black', value: 'black' },
+                { label: 'Both', value: 'both' },
+            ]}
+        />
        <Group grow>
          <Button color={"red"} onClick={() => setPieceSelected(undefined)} variant={"light"}>
            <IconTrash/>
@@ -152,7 +161,7 @@ function App() {
          })}
        </Group>
        <Group grow align={"end"}>
-         <Button onClick={() => doThinkAsync(piecesOnTray, deepth).then(setThink)}>
+         <Button onClick={() => doThinkAsync(piecesOnTray, deepth, thinkForColor).then(setThink)}>
            THINK
          </Button>
          <NumberInput value={deepth} onChange={(e) => e && setDeepth(e as number)} label={"depth"} />
@@ -160,11 +169,11 @@ function App() {
        <Group grow>
          <Button color={"green"} onClick={() => {
 
-           const pieceSelected = piecesOnTray.find(v  => v.position === think?.white.oldPosition)
-           if(!pieceSelected) return
-           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.white.oldPosition)
-           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.white.position)
-           newPiecesOnTray.push({...pieceSelected, ...think?.white})
+           const pieceSelected = piecesOnTray.find(v  => v.position === think?.white?.oldPosition)
+           if(!pieceSelected || !think?.white) return
+           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.white?.oldPosition)
+           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.white?.position)
+           newPiecesOnTray.push({...pieceSelected, ...think.white})
 
            setPiecesOnTray(newPiecesOnTray)
 
@@ -172,11 +181,11 @@ function App() {
          }}>APPLY WHITE</Button>
          <Button  color={"red"} onClick={() => {
 
-           const pieceSelected = piecesOnTray.find(v  => v.position === think?.black.oldPosition)
-           if(!pieceSelected) return
-           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.black.oldPosition)
-           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.black.position)
-           newPiecesOnTray.push({...pieceSelected, ...think?.black})
+           const pieceSelected = piecesOnTray.find(v  => v.position === think?.black?.oldPosition)
+           if(!pieceSelected || !think?.black) return
+           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.black?.oldPosition)
+           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.black?.position)
+           newPiecesOnTray.push({...pieceSelected, ...think.black})
 
            setPiecesOnTray(newPiecesOnTray)
 

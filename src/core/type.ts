@@ -21,13 +21,13 @@ export type Piece = {
   color: GameColor,
 }
 
-export type PieceOnTray = Piece & {position: string, posX: number, posY: number}
+export type PieceOnTray = Piece & {position: string, posX: number, posY: number, id: string}
 
 export type ThinkResponse = {
-  black: {
+  black?: {
     index: number, posX: number, posY: number, position: string, oldPosition: string
   },
-  white: {
+  white?: {
     index: number, posX: number, posY: number, position: string, oldPosition: string
   }
 }
