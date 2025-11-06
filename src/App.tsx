@@ -1,11 +1,10 @@
-import { Button, Group, Stack, Text } from "@mantine/core"
+import { Button, Group, NumberInput, Stack } from "@mantine/core"
 import "./App.css"
 import { useState } from "react"
-import { GameColor, type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
+import { type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
 import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
-import { getTrayScoreV1 } from "./poxThinkv1.ts"
 import { PoxThinkV2 } from "./poxThinkv2.ts"
 
 
@@ -14,6 +13,7 @@ function App() {
   const [piecesOnTray, setPiecesOnTray] = useState<PieceOnTray[]>(defaultValues)
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
   const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
+  const [deepth, setDeepth] = useState<number>(3)
 
   console.log( piecesOnTray )
 
@@ -90,12 +90,37 @@ function App() {
            )
          })}
        </Group>
-       <Button onClick={() => setThink(PoxThinkV2(piecesOnTray, 5))}>
-         THINK
-       </Button>
-       <Group>
-         <Text>WHITE : {getTrayScoreV1(piecesOnTray, GameColor.WHITE)}</Text>
-         <Text>BLACK : {getTrayScoreV1(piecesOnTray, GameColor.BLACK)}</Text>
+       <Group grow align={"end"}>
+         <Button onClick={() => setThink(PoxThinkV2(piecesOnTray, deepth))}>
+           THINK
+         </Button>
+         <NumberInput value={deepth} onChange={(e) => e && setDeepth(e)} label={"depth"} />
+       </Group>
+       <Group grow>
+         <Button color={"green"} onClick={() => {
+
+           const pieceSelected = piecesOnTray.find(v  => v.position === think?.white.oldPosition)
+           if(!pieceSelected) return
+           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.white.oldPosition)
+           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.white.position)
+           newPiecesOnTray.push({...pieceSelected, ...think?.white})
+
+           setPiecesOnTray(newPiecesOnTray)
+
+
+         }}>APPLY WHITE</Button>
+         <Button  color={"red"} onClick={() => {
+
+           const pieceSelected = piecesOnTray.find(v  => v.position === think?.black.oldPosition)
+           if(!pieceSelected) return
+           let newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== think?.black.oldPosition)
+           newPiecesOnTray = newPiecesOnTray.filter(p => p.position !== think?.black.position)
+           newPiecesOnTray.push({...pieceSelected, ...think?.black})
+
+           setPiecesOnTray(newPiecesOnTray)
+
+
+         }}>APPLY BLACK</Button>
        </Group>
      </Stack>
 
