@@ -1,11 +1,11 @@
-import { Button, Group, Stack } from "@mantine/core"
+import { Button, Group, Stack, Text } from "@mantine/core"
 import "./App.css"
 import { useState } from "react"
-import type { Piece, PieceOnTray, ThinkResponse } from "./core/type.ts"
+import { GameColor, type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
 import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
-import { PoxThinkV1 } from "./poxThinkv1.ts"
+import { getTrayScoreV1, PoxThinkV1 } from "./poxThinkv1.ts"
 
 
 function App() {
@@ -29,9 +29,14 @@ function App() {
 
   const addPiece = ({posX, posY, position}: {posX: number, posY: number, position: string}) => {
     const newPiecesOnTray = [...piecesOnTray].filter(v  => v.position !== position)
-    if(!pieceSelected) return setPiecesOnTray(newPiecesOnTray)
+    if(!pieceSelected) {
+      setPieceSelected(piecesOnTray.find(p => p.position === position))
+      setPiecesOnTray( newPiecesOnTray )
+      return
+    }
     newPiecesOnTray.push({ ...pieceSelected, position, posX, posY })
     setPiecesOnTray(newPiecesOnTray)
+    setPieceSelected(undefined)
   }
 
   return (
@@ -55,9 +60,17 @@ function App() {
      </Stack>
 
      <Stack>
-       <Button color={"red"} onClick={() => setPieceSelected(undefined)} variant={"light"}>
-         <IconTrash/>
+       <Group grow>
+         <Button color={"red"} onClick={() => setPieceSelected(undefined)} variant={"light"}>
+           <IconTrash/>
+         </Button>
+         <Button color={"red"} onClick={() => {
+           setPieceSelected( undefined )
+           setPiecesOnTray([])
+         }} variant={"light"}>
+         DELETE ALL
        </Button>
+       </Group>
        <Group>
          {allBlackPieces.map((piece) => {
            return (
@@ -76,9 +89,13 @@ function App() {
            )
          })}
        </Group>
-       <Button onClick={() => setThink(PoxThinkV1(piecesOnTray))}>
+       <Button onClick={() => setThink(PoxThinkV1(piecesOnTray, 2))}>
          THINK
        </Button>
+       <Group>
+         <Text>WHITE : {getTrayScoreV1(piecesOnTray, GameColor.WHITE)}</Text>
+         <Text>BLACK : {getTrayScoreV1(piecesOnTray, GameColor.BLACK)}</Text>
+       </Group>
      </Stack>
 
    </Stack>

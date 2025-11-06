@@ -198,7 +198,7 @@ export const defaultValues: PieceOnTray[] = [
   },
   {
     "name": "cavalier",
-    "element": <PionPiece color={GameColor.BLACK}/>,
+    "element": <CavalierPiece color={GameColor.BLACK}/>,
     "color": "BLACK",
     "position": "x6y0",
     "posX": 6,
@@ -238,7 +238,7 @@ export const defaultValues: PieceOnTray[] = [
   },
   {
     "name": "king",
-    "element": <FouPiece color={GameColor.BLACK}/>,
+    "element": <RoiPiece color={GameColor.BLACK}/>,
     "color": "BLACK",
     "position": "x4y0",
     "posX": 4,

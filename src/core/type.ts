@@ -31,3 +31,7 @@ export type ThinkResponse = {
     index: number, posX: number, posY: number, position: string, oldPosition: string
   }
 }
+
+export type Movement = {
+  posX: number, posY: number, position: string
+}
