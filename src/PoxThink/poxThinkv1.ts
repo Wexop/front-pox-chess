@@ -185,7 +185,7 @@ export const getTrayScoreV1 = (pieces: PieceOnTray[], color: GameColor) => {
   return score
 }
 
-const canMoveOnCase = (pieces: PieceOnTray[], color: GameColor, posX: number, posY: number, stopEnemyLook?: boolean) => {
+const canMoveOnCase = (pieces: PieceOnTray[], color: GameColor, posX: number, posY: number) => {
 
   if(posY > 7 || posY < 0) return false;
   if(posX > 7 || posX < 0) return false;
@@ -193,31 +193,6 @@ const canMoveOnCase = (pieces: PieceOnTray[], color: GameColor, posX: number, po
   return true;
 
 }
-
-const eatPiecePoint = (piece: PieceName) => {
-  switch ( piece ) {
-    case PieceName.king: {
-      return 100
-    }
-    case PieceName.pion: {
-      return 1
-    }
-    case PieceName.tour: {
-      return 7
-    }
-    case PieceName.cavalier: {
-      return 5
-    }
-    case PieceName.fou: {
-      return 7
-    }
-    case PieceName.queen: {
-      return 10
-    }
-  }
-}
-
-
 
 const inside = (x: number, y: number) =>
   x >= 0 && x < 8 && y >= 0 && y < 8

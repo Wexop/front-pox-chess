@@ -6,7 +6,7 @@ import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
 import { fenToPieces } from "./core/fen.ts"
-import { PoxThinkV2 } from "./PoxThink/poxThinkv2.ts"
+import { PoxThinkV4 } from "./PoxThink/poxThinkv4.ts"
 
 
 function App() {
@@ -14,7 +14,7 @@ function App() {
   const [piecesOnTray, setPiecesOnTray] = useState<PieceOnTray[]>(defaultValues)
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
   const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
-  const [deepth, setDeepth] = useState<number>(3)
+  const [deepth, setDeepth] = useState<number>(5) // Default to a higher depth for V4
   const [fen, setFen] = useState<string>("")
   const [autoLoop, setAutoLoop] = useState<boolean>(false)
 
@@ -30,7 +30,6 @@ function App() {
 
     const interval = setInterval(async () => {
       const newFen = await getFen();
-      console.log( (newFen && fen !== newFen) )
       if (newFen && fen !== newFen) loadFen(newFen);
     }, 300);
 
@@ -39,7 +38,7 @@ function App() {
 
   useEffect(() => {
     if (piecesOnTray.length === 0) return;
-    setThink(PoxThinkV2(piecesOnTray, deepth));
+    doThinkAsync(piecesOnTray, deepth).then(setThink);
   }, [piecesOnTray, deepth]);
 
 
@@ -72,11 +71,6 @@ function App() {
       const pieces = fenToPieces(fenToUse);
       setPiecesOnTray(pieces);
       setFen(fenToUse);
-
-      // annule l'ancien think en cours
-      thinkAbort = true;
-      const newThink = await doThinkAsync(pieces, deepth);
-      if (!thinkAbort) setThink(newThink);
     } catch (e) {
       console.error(e);
     }
@@ -88,14 +82,11 @@ function App() {
 
   }
 
-  let thinkAbort = false;
-
   const doThinkAsync = async (pieces: PieceOnTray[], depth: number) => {
-    thinkAbort = false;
     return new Promise<ThinkResponse>((resolve) => {
+      // Use a timeout to ensure the UI remains responsive
       setTimeout(() => {
-        if (thinkAbort) return; // on stoppe
-        const result = PoxThinkV2(pieces, depth);
+        const result = PoxThinkV4(pieces, depth);
         resolve(result);
       });
     });
@@ -161,7 +152,7 @@ function App() {
          })}
        </Group>
        <Group grow align={"end"}>
-         <Button onClick={doThinkAsync}>
+         <Button onClick={() => doThinkAsync(piecesOnTray, deepth).then(setThink)}>
            THINK
          </Button>
          <NumberInput value={deepth} onChange={(e) => e && setDeepth(e as number)} label={"depth"} />
