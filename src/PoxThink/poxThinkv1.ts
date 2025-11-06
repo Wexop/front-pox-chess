@@ -1,4 +1,4 @@
-import { GameColor, type Movement, PieceName, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
+import { GameColor, type Movement, PieceName, type PieceOnTray, type ThinkResponse } from "../core/type.ts"
 
 
 export const PoxThinkV1 = (pieces: PieceOnTray[], depth = 2): ThinkResponse => {

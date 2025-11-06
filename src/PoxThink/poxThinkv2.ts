@@ -1,4 +1,4 @@
-import { GameColor, type Movement, PieceName, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
+import { GameColor, type Movement, PieceName, type PieceOnTray, type ThinkResponse } from "../core/type.ts"
 
 
 const PIECE_VALUE: Record<PieceName, number> = {

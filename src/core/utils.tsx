@@ -43,3 +43,5 @@ export const allWhitePieces: Piece[] = [
     name: PieceName.tour, element: <TourPiece color={GameColor.WHITE} />, color: GameColor.WHITE
   },
 ]
+
+export const allPieces: Piece[] = [...allWhitePieces, ...allBlackPieces];

@@ -1,11 +1,12 @@
-import { Button, Group, NumberInput, Stack } from "@mantine/core"
+import { Button, Group, NumberInput, Stack, TextInput } from "@mantine/core"
 import "./App.css"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
 import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
-import { PoxThinkV2 } from "./poxThinkv2.ts"
+import { fenToPieces } from "./core/fen.ts"
+import { PoxThinkV2 } from "./PoxThink/poxThinkv2.ts"
 
 
 function App() {
@@ -14,8 +15,33 @@ function App() {
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
   const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
   const [deepth, setDeepth] = useState<number>(3)
+  const [fen, setFen] = useState<string>("")
+  const [autoLoop, setAutoLoop] = useState<boolean>(false)
 
-  console.log( piecesOnTray )
+  const getFen = async () => {
+    const res = await fetch('http://localhost:4000/fen');
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.fen as string;
+  };
+
+  useEffect(() => {
+    if (!autoLoop) return;
+
+    const interval = setInterval(async () => {
+      const newFen = await getFen();
+      console.log( (newFen && fen !== newFen) )
+      if (newFen && fen !== newFen) loadFen(newFen);
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [autoLoop, fen]);
+
+  useEffect(() => {
+    if (piecesOnTray.length === 0) return;
+    setThink(PoxThinkV2(piecesOnTray, deepth));
+  }, [piecesOnTray, deepth]);
+
 
   const chessTray = [
     ["x0y0", "x1y0", "x2y0", "x3y0","x4y0", "x5y0", "x6y0", "x7y0"],
@@ -40,9 +66,44 @@ function App() {
     setPieceSelected(undefined)
   }
 
+  const loadFen = async (overwrite?: string) => {
+    try {
+      const fenToUse = overwrite ?? fen;
+      const pieces = fenToPieces(fenToUse);
+      setPiecesOnTray(pieces);
+      setFen(fenToUse);
+
+      // annule l'ancien think en cours
+      thinkAbort = true;
+      const newThink = await doThinkAsync(pieces, deepth);
+      if (!thinkAbort) setThink(newThink);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadFenFromCopy = async () => {
+    const read = await navigator.clipboard.readText()
+    if(read !== fen) loadFen(read)
+
+  }
+
+  let thinkAbort = false;
+
+  const doThinkAsync = async (pieces: PieceOnTray[], depth: number) => {
+    thinkAbort = false;
+    return new Promise<ThinkResponse>((resolve) => {
+      setTimeout(() => {
+        if (thinkAbort) return; // on stoppe
+        const result = PoxThinkV2(pieces, depth);
+        resolve(result);
+      });
+    });
+  };
+
   return (
    <Stack gap={50} align={"center"}>
-     <Stack gap={2}>
+     <Stack key={fen} gap={2}>
        {chessTray.map((lane, i) => (
          <Group gap={2} key={i}>
            {lane.map((place, i2) => {
@@ -61,6 +122,15 @@ function App() {
      </Stack>
 
      <Stack>
+        <Group>
+            <TextInput value={fen} onChange={(event) => setFen(event.currentTarget.value)} placeholder="Enter FEN string" />
+            <Button onClick={() => loadFen()}>Load FEN</Button>
+            <Button id={"fenFromCopy"} onClick={loadFenFromCopy}>From copy FEN</Button>
+            <Button color={ autoLoop ? "green" :"red"} onClick={() =>  {
+              setAutoLoop(!autoLoop)
+
+            }}>AUTO LOOP FEN</Button>
+        </Group>
        <Group grow>
          <Button color={"red"} onClick={() => setPieceSelected(undefined)} variant={"light"}>
            <IconTrash/>
@@ -91,10 +161,10 @@ function App() {
          })}
        </Group>
        <Group grow align={"end"}>
-         <Button onClick={() => setThink(PoxThinkV2(piecesOnTray, deepth))}>
+         <Button onClick={doThinkAsync}>
            THINK
          </Button>
-         <NumberInput value={deepth} onChange={(e) => e && setDeepth(e)} label={"depth"} />
+         <NumberInput value={deepth} onChange={(e) => e && setDeepth(e as number)} label={"depth"} />
        </Group>
        <Group grow>
          <Button color={"green"} onClick={() => {
