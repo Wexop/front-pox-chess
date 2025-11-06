@@ -5,7 +5,8 @@ import { GameColor, type Piece, type PieceOnTray, type ThinkResponse } from "./c
 import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
-import { getTrayScoreV1, PoxThinkV1 } from "./poxThinkv1.ts"
+import { getTrayScoreV1 } from "./poxThinkv1.ts"
+import { PoxThinkV2 } from "./poxThinkv2.ts"
 
 
 function App() {
@@ -89,7 +90,7 @@ function App() {
            )
          })}
        </Group>
-       <Button onClick={() => setThink(PoxThinkV1(piecesOnTray, 2))}>
+       <Button onClick={() => setThink(PoxThinkV2(piecesOnTray, 5))}>
          THINK
        </Button>
        <Group>
