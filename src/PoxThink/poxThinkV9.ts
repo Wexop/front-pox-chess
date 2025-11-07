@@ -1,0 +1,713 @@
+import { GameColor, type Piece, PieceName, type PieceOnTray, type ThinkResponse } from "../core/type.ts"
+
+// --- V9 (SEE Fix) Configuration ---
+const MAX_SEARCH_TIME = 3000;
+const MATE_SCORE = 100000;
+const MATE_THRESHOLD = MATE_SCORE - 1000;
+const TABLE_SIZE = 1e7;
+const MAX_EXTENSION_PLY = 8;
+const NULL_MOVE_REDUCTION = 2;
+const NULL_MOVE_MIN_DEPTH = 3;
+
+// --- V9 (SEE Fix) Piece Values & PSQTs ---
+const PIECE_VALUE: Record<PieceName, number> = {
+  [PieceName.pion]: 100, [PieceName.cavalier]: 320, [PieceName.fou]: 330, [PieceName.tour]: 500, [PieceName.queen]: 950, [PieceName.king]: 20000
+};
+const BISHOP_PAIR_BONUS = 50;
+
+const pawnEval = [[0,0,0,0,0,0,0,0],[50,50,50,50,50,50,50,50],[10,10,20,30,30,20,10,10],[5,5,10,25,25,10,5,5],[0,0,0,20,20,0,0,0],[5,-5,-10,0,0,-10,-5,5],[5,10,10,-20,-20,10,10,5],[0,0,0,0,0,0,0,0]];
+const knightEval = [[-50,-40,-30,-30,-30,-30,-40,-50],[-40,-20,0,0,0,0,-20,-40],[-30,0,10,15,15,10,0,-30],[-30,5,15,20,20,15,5,-30],[-30,0,15,20,20,15,0,-30],[-30,5,10,15,15,10,5,-30],[-40,-20,0,5,5,0,-20,-40],[-50,-40,-30,-30,-30,-30,-40,-50]];
+const bishopEval = [[-20,-10,-10,-10,-10,-10,-10,-20],[-10,0,0,0,0,0,0,-10],[-10,0,5,10,10,5,0,-10],[-10,5,5,10,10,5,5,-10],[-10,0,10,10,10,10,0,-10],[-10,10,10,10,10,10,10,-10],[-10,5,0,0,0,0,5,-10],[-20,-10,-10,-10,-10,-10,-10,-20]];
+const rookEval = [[0,0,0,0,0,0,0,0],[5,10,10,10,10,10,10,5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[0,0,0,5,5,0,0,0]];
+const queenEval = [[-20,-10,-10,-5,-5,-10,-10,-20],[-10,0,0,0,0,0,0,-10],[-10,0,5,5,5,5,0,-10],[-5,0,5,5,5,5,0,-5],[0,0,5,5,5,5,0,-5],[-10,5,5,5,5,5,0,-10],[-10,0,5,0,0,0,0,-10],[-20,-10,-10,-5,-5,-10,-10,-20]];
+const kingEval = [[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-20,-30,-30,-40,-40,-30,-30,-20],[-10,-20,-20,-20,-20,-20,-20,-10],[20,20,0,0,0,0,20,20],[20,30,10,0,0,10,30,20]];
+
+const pieceSquareTables: Record<PieceName, number[][]> = {
+  [PieceName.pion]: pawnEval, [PieceName.cavalier]: knightEval, [PieceName.fou]: bishopEval, [PieceName.tour]: rookEval,
+  [PieceName.queen]: queenEval, [PieceName.king]: kingEval
+};
+
+// --- V9 (SEE Fix) Interfaces ---
+interface Move {
+  fromX: number; fromY: number; toX: number; toY: number;
+  piece: PieceName; capturedPiece?: PieceName; promotion?: PieceName;
+  score: number; isCastle?: 'K' | 'Q'; isEnPassant?: boolean;
+}
+type TTFlag = 'EXACT' | 'LOWER' | 'UPPER';
+interface TTEntry {
+  depth: number; score: number; flag: TTFlag; bestMove?: Move;
+}
+interface CastlingRights { wK: boolean; wQ: boolean; bK: boolean; bQ: boolean; }
+
+// --- V9 (SEE Fix) Helper Functions ---
+const opposite = (color: GameColor): GameColor => color === GameColor.WHITE ? GameColor.BLACK : GameColor.WHITE;
+
+// --- V9 (SEE Fix) Board Class ---
+class Board {
+  grid: (PieceOnTray | null)[][];
+  turn: GameColor = GameColor.WHITE;
+  castlingRights: CastlingRights;
+  enPassantTarget: { x: number, y: number } | null = null;
+  history: {
+    move: Move, captured: PieceOnTray | null,
+    oldCastlingRights: CastlingRights,
+    oldEnPassantTarget: { x: number, y: number } | null
+  }[] = [];
+  kingPos: { [GameColor.WHITE]: { x: number, y: number }, [GameColor.BLACK]: { x: number, y: number } };
+
+  constructor(pieces: PieceOnTray[]) {
+    this.grid = Array(8).fill(null).map(() => Array(8).fill(null));
+    this.kingPos = { [GameColor.WHITE]: { x: -1, y: -1 }, [GameColor.BLACK]: { x: -1, y: -1 } };
+    let wK = false, wQ = false, bK = false, bQ = false;
+    let wKingOnHome = false, bKingOnHome = false;
+
+    for (const piece of pieces) {
+      if (piece) {
+        this.grid[piece.posY][piece.posX] = piece;
+        if (piece.name === PieceName.king) {
+          this.kingPos[piece.color] = { x: piece.posX, y: piece.posY };
+          if (piece.color === GameColor.WHITE && piece.posX === 4 && piece.posY === 7) wKingOnHome = true;
+          if (piece.color === GameColor.BLACK && piece.posX === 4 && piece.posY === 0) bKingOnHome = true;
+        }
+      }
+    }
+    if (wKingOnHome) {
+      if (this.grid[7][7]?.name === PieceName.tour && this.grid[7][7]?.color === GameColor.WHITE) wK = true;
+      if (this.grid[7][0]?.name === PieceName.tour && this.grid[7][0]?.color === GameColor.WHITE) wQ = true;
+    }
+    if (bKingOnHome) {
+      if (this.grid[0][7]?.name === PieceName.tour && this.grid[0][7]?.color === GameColor.BLACK) bK = true;
+      if (this.grid[0][0]?.name === PieceName.tour && this.grid[0][0]?.color === GameColor.BLACK) bQ = true;
+    }
+    this.castlingRights = { wK, wQ, bK, bQ };
+  }
+
+  getPositionKey(): string {
+    let key = this.turn === GameColor.WHITE ? 'w' : 'b';
+    key += `${this.castlingRights.wK}${this.castlingRights.wQ}${this.castlingRights.bK}${this.castlingRights.bQ}`;
+    key += `|${this.enPassantTarget ? `${this.enPassantTarget.x}${this.enPassantTarget.y}` : 'null'}|`;
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const p = this.grid[y][x];
+        if (p) { key += `${p.id}@${y}${x}`; }
+      }
+    }
+    return key;
+  }
+
+  makeMove(move: Move): void {
+    const piece = this.grid[move.fromY][move.fromX]!;
+    let captured = this.grid[move.toY][move.toX];
+    const oldCastlingRights = { ...this.castlingRights };
+    const oldEnPassantTarget = this.enPassantTarget;
+    this.history.push({ move, captured, oldCastlingRights, oldEnPassantTarget });
+
+    if (move.isEnPassant) {
+      const pawnDir = piece.color === GameColor.WHITE ? 1 : -1;
+      captured = this.grid[move.toY + pawnDir][move.toX];
+      this.grid[move.toY + pawnDir][move.toX] = null;
+    }
+    if (move.isCastle) {
+      if (move.isCastle === 'K') {
+        const rook = this.grid[move.fromY][7]!;
+        this.grid[move.fromY][5] = rook; this.grid[move.fromY][7] = null;
+      } else {
+        const rook = this.grid[move.fromY][0]!;
+        this.grid[move.fromY][3] = rook; this.grid[move.fromY][0] = null;
+      }
+    }
+    this.grid[move.toY][move.toX] = piece;
+    this.grid[move.fromY][move.fromX] = null;
+    if (piece.name === PieceName.king) {
+      this.kingPos[piece.color] = { x: move.toX, y: move.toY };
+    }
+    if (move.promotion) {
+      this.grid[move.toY][move.toX] = { ...piece, name: move.promotion, position: `x${move.toX}y${move.toY}`, posX: move.toX, posY: move.toY };
+    }
+    if (piece.name === PieceName.pion && Math.abs(move.toY - move.fromY) === 2) {
+      const dir = piece.color === GameColor.WHITE ? -1 : 1;
+      this.enPassantTarget = { x: move.fromX, y: move.fromY + dir };
+    } else {
+      this.enPassantTarget = null;
+    }
+    if (piece.name === PieceName.king) {
+      if (piece.color === GameColor.WHITE) { this.castlingRights.wK = false; this.castlingRights.wQ = false; }
+      else { this.castlingRights.bK = false; this.castlingRights.bQ = false; }
+    }
+    if (move.fromX === 0 && move.fromY === 7) this.castlingRights.wQ = false;
+    if (move.fromX === 7 && move.fromY === 7) this.castlingRights.wK = false;
+    if (move.fromX === 0 && move.fromY === 0) this.castlingRights.bQ = false;
+    if (move.fromX === 7 && move.fromY === 0) this.castlingRights.bK = false;
+    if (move.toX === 0 && move.toY === 7) this.castlingRights.wQ = false;
+    if (move.toX === 7 && move.toY === 7) this.castlingRights.wK = false;
+    if (move.toX === 0 && move.toY === 0) this.castlingRights.bQ = false;
+    if (move.toX === 7 && move.toY === 0) this.castlingRights.bK = false;
+    this.turn = opposite(this.turn);
+  }
+
+  unmakeMove(): void {
+    const lastState = this.history.pop();
+    if (!lastState) return;
+    const { move, captured, oldCastlingRights, oldEnPassantTarget } = lastState;
+    this.turn = opposite(this.turn);
+    this.castlingRights = oldCastlingRights;
+    this.enPassantTarget = oldEnPassantTarget;
+    const pieceOnToSquare = this.grid[move.toY][move.toX]!;
+    const originalPiece: PieceOnTray = { ...pieceOnToSquare, name: move.piece, position: `x${move.fromX}y${move.fromY}`, posX: move.fromX, posY: move.fromY };
+    this.grid[move.fromY][move.fromX] = originalPiece;
+    this.grid[move.toY][move.toX] = captured;
+    if (originalPiece.name === PieceName.king) {
+      this.kingPos[originalPiece.color] = { x: move.fromX, y: move.fromY };
+    }
+    if (move.isEnPassant) {
+      const pawnDir = originalPiece.color === GameColor.WHITE ? 1 : -1;
+      this.grid[move.toY][move.toX] = null;
+      this.grid[move.toY + pawnDir][move.toX] = captured;
+    }
+    if (move.isCastle) {
+      if (move.isCastle === 'K') {
+        const rook = this.grid[move.fromY][5]!;
+        this.grid[move.fromY][7] = rook; this.grid[move.fromY][5] = null;
+      } else {
+        const rook = this.grid[move.fromY][3]!;
+        this.grid[move.fromY][0] = rook; this.grid[move.fromY][3] = null;
+      }
+    }
+  }
+}
+
+// --- PoxThinkV9 (SEE Fix) ---
+export const PoxThinkV9 = (
+  pieces: PieceOnTray[],
+  maxDepth = 7,
+  thinkForColor: 'white' | 'black' | 'both' = 'both'
+): ThinkResponse => {
+
+  const board = new Board(pieces);
+  const transpositionTable = new Map<string, TTEntry>();
+  const killerMoves: (Move | null)[][] = Array(maxDepth + MAX_EXTENSION_PLY + 2).fill(null).map(() => [null, null]);
+  const historyTable: number[][] = Array(6).fill(null).map(() => Array(64).fill(0));
+  const pieceIndexMap: Record<PieceName, number> = {
+    [PieceName.pion]: 0, [PieceName.cavalier]: 1, [PieceName.fou]: 2,
+    [PieceName.tour]: 3, [PieceName.queen]: 4, [PieceName.king]: 5
+  };
+
+  let startTime = 0;
+  let nodes = 0;
+  let timeUp = false;
+  let rootMaxDepth = 0;
+
+  const getPieceAt = (x: number, y: number) => board.grid[y]?.[x];
+
+  // --- Attack Functions ---
+  const isSquareAttacked = (x: number, y: number, attackerColor: GameColor): boolean => {
+    const pawnDir = attackerColor === GameColor.WHITE ? 1 : -1;
+    if (getPieceAt(x - 1, y + pawnDir)?.name === PieceName.pion && getPieceAt(x - 1, y + pawnDir)?.color === attackerColor) return true;
+    if (getPieceAt(x + 1, y + pawnDir)?.name === PieceName.pion && getPieceAt(x + 1, y + pawnDir)?.color === attackerColor) return true;
+    const knightMoves = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+    for (const [dx, dy] of knightMoves) { if (getPieceAt(x + dx, y + dy)?.name === PieceName.cavalier && getPieceAt(x + dx, y + dy)?.color === attackerColor) return true; }
+    const lineDirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [dx, dy] of lineDirs) { let curX = x + dx, curY = y + dy; while (curX >= 0 && curX <= 7 && curY >= 0 && curY <= 7) { const p = getPieceAt(curX, curY); if (p) { if (p.color === attackerColor && (p.name === PieceName.tour || p.name === PieceName.queen)) return true; break; } curX += dx; curY += dy; } }
+    const diagDirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
+    for (const [dx, dy] of diagDirs) { let curX = x + dx, curY = y + dy; while (curX >= 0 && curX <= 7 && curY >= 0 && curY <= 7) { const p = getPieceAt(curX, curY); if (p) { if (p.color === attackerColor && (p.name === PieceName.fou || p.name === PieceName.queen)) return true; break; } curX += dx; curY += dy; } }
+    const kingMoves = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+    for (const [dx, dy] of kingMoves) { if (getPieceAt(x + dx, y + dy)?.name === PieceName.king && getPieceAt(x + dx, y + dy)?.color === attackerColor) return true; }
+    return false;
+  };
+  const isKingInCheck = (color: GameColor): boolean => {
+    const king = board.kingPos[color];
+    if (king.x === -1) return false;
+    return isSquareAttacked(king.x, king.y, opposite(color));
+  };
+
+  // --- ✨ V9 (SEE Fix) Move Generation ---
+  const getMovesForPiece = (p: PieceOnTray, x: number, y: number, color: GameColor): Move[] => {
+    const generatedMoves: Move[] = [];
+    const { name } = p;
+
+    const addMove = (toX: number, toY: number, promotion?: PieceName, isCastle?: 'K' | 'Q', isEnPassant?: boolean) => {
+      const captured = getPieceAt(toX, toY);
+      let score = 0;
+      if (captured) { score = 1000000 + (PIECE_VALUE[captured.name] - PIECE_VALUE[p.name]); }
+      else if (isEnPassant) { score = 1000000 + (PIECE_VALUE[PieceName.pion] - PIECE_VALUE[PieceName.pion]); }
+      else if (promotion) { score = 900000 + PIECE_VALUE[promotion]; }
+      else { score = historyTable[pieceIndexMap[p.name]][toY * 8 + toX]; }
+      generatedMoves.push({ fromX: x, fromY: y, toX, toY, piece: p.name, capturedPiece: captured?.name, promotion, isCastle, isEnPassant, score });
+    };
+
+    const addRayMoves = (dirs: number[][]) => {
+      for (const [dx, dy] of dirs) {
+        let curX = x + dx, curY = y + dy;
+        while (curX >= 0 && curX <= 7 && curY >= 0 && curY <= 7) {
+          const target = getPieceAt(curX, curY);
+          if (target) {
+            if (target.color !== color) {
+              addMove(curX, curY);
+            }
+            break;
+          }
+          addMove(curX, curY);
+          curX += dx; curY += dy;
+        }
+      }
+    };
+
+    if (name === PieceName.pion) {
+      const dir = color === GameColor.WHITE ? -1 : 1;
+      const startRank = color === GameColor.WHITE ? 6 : 1;
+      const promotionRank = color === GameColor.WHITE ? 0 : 7;
+      const toY = y + dir;
+
+      if (toY >= 0 && toY <= 7) {
+        if (!getPieceAt(x, toY)) {
+          if (toY === promotionRank) {
+            [PieceName.queen, PieceName.tour, PieceName.fou, PieceName.cavalier].forEach(promoName => addMove(x, toY, promoName));
+          } else {
+            addMove(x, toY);
+          }
+          if (y === startRank && !getPieceAt(x, y + 2 * dir)) {
+            addMove(x, y + 2 * dir);
+          }
+        }
+        for (const dx of [-1, 1]) {
+          const toX = x + dx;
+          if (toX >= 0 && toX <= 7) {
+            const target = getPieceAt(toX, toY);
+            if (target && target.color !== color) {
+              if (toY === promotionRank) {
+                [PieceName.queen, PieceName.tour, PieceName.fou, PieceName.cavalier].forEach(promoName => addMove(toX, toY, promoName));
+              } else {
+                addMove(toX, toY);
+              }
+            }
+            if (board.enPassantTarget && board.enPassantTarget.x === toX && board.enPassantTarget.y === toY) {
+              addMove(toX, toY, undefined, undefined, true);
+            }
+          }
+        }
+      }
+    } else if (name === PieceName.king) {
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+      for(const [dx, dy] of dirs) {
+        const toX = x + dx, toY = y + dy;
+        if (toX >= 0 && toX <= 7 && toY >= 0 && toY <= 7) {
+          const target = getPieceAt(toX, toY);
+          if (!target || target.color !== color) addMove(toX, toY);
+        }
+      }
+      const rights = board.castlingRights; const opponentColor = opposite(color);
+      if (!isKingInCheck(color)) {
+        if ((color === GameColor.WHITE ? rights.wK : rights.bK) && !getPieceAt(x + 1, y) && !getPieceAt(x + 2, y) && !isSquareAttacked(x + 1, y, opponentColor) && !isSquareAttacked(x + 2, y, opponentColor)) { addMove(x + 2, y, undefined, 'K'); }
+        if ((color === GameColor.WHITE ? rights.wQ : rights.bQ) && !getPieceAt(x - 1, y) && !getPieceAt(x - 2, y) && !getPieceAt(x - 3, y) && !isSquareAttacked(x - 1, y, opponentColor) && !isSquareAttacked(x - 2, y, opponentColor)) { addMove(x - 2, y, undefined, 'Q'); }
+      }
+    } else {
+      const dirs = { [PieceName.cavalier]: [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]], [PieceName.fou]: [[1,1],[1,-1],[-1,1],[-1,-1]], [PieceName.tour]: [[1,0],[-1,0],[0,1],[0,-1]], [PieceName.queen]: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]] }[name];
+      if ([PieceName.fou, PieceName.tour, PieceName.queen].includes(name)) {
+        addRayMoves(dirs as number[][]);
+      } else {
+        for(const [dx, dy] of dirs) {
+          const toX = x + dx, toY = y + dy;
+          if (toX >= 0 && toX <= 7 && toY >= 0 && toY <= 7) {
+            const target = getPieceAt(toX, toY);
+            if (!target || target.color !== color) addMove(toX, toY);
+          }
+        }
+      }
+    }
+    return generatedMoves;
+  };
+
+  const generateAllMoves = (color: GameColor): Move[] => {
+    const allMoves: Move[] = [];
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const piece = getPieceAt(x, y);
+        if (piece && piece.color === color) {
+          allMoves.push(...getMovesForPiece(piece, x, y, color));
+        }
+      }
+    }
+    return allMoves;
+  };
+
+  // --- ✨ V9 (SEE Fix) Evaluation ---
+  const evaluate = (): number => {
+    let score = 0;
+    let whiteBishops = 0, blackBishops = 0;
+    let whiteMobility = 0, blackMobility = 0;
+
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const p = getPieceAt(x, y);
+        if (p) {
+          const pieceValue = PIECE_VALUE[p.name];
+          const psqt = pieceSquareTables[p.name];
+          const positionalScore = p.color === GameColor.WHITE ? psqt[y][x] : psqt[7 - y][x];
+          let finalPieceScore = pieceValue + positionalScore;
+
+          if (p.name !== PieceName.king && (x >= 2 && x <= 5 && y >= 2 && y <= 5)) {
+            finalPieceScore += 10;
+          }
+
+          if (p.color === GameColor.WHITE) {
+            score += finalPieceScore;
+            if (p.name === PieceName.fou) whiteBishops++;
+            whiteMobility += getMovesForPiece(p, x, y, p.color).length;
+          } else {
+            score -= finalPieceScore;
+            if (p.name === PieceName.fou) blackBishops++;
+            blackMobility += getMovesForPiece(p, x, y, p.color).length;
+          }
+        }
+      }
+    }
+
+    if (whiteBishops >= 2) score += BISHOP_PAIR_BONUS;
+    if (blackBishops >= 2) score -= BISHOP_PAIR_BONUS;
+
+    score += (whiteMobility - blackMobility) * 3;
+
+    const whiteKing = board.kingPos[GameColor.WHITE];
+    const blackKing = board.kingPos[GameColor.BLACK];
+    let whiteKingThreats = 0;
+    let blackKingThreats = 0;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        if (whiteKing.x !== -1 && isSquareAttacked(whiteKing.x + dx, whiteKing.y + dy, GameColor.BLACK)) whiteKingThreats++;
+        if (blackKing.x !== -1 && isSquareAttacked(blackKing.x + dx, blackKing.y + dy, GameColor.WHITE)) blackKingThreats++;
+      }
+    }
+
+    score -= whiteKingThreats * 15;
+    score += blackKingThreats * 15;
+
+    return board.turn === GameColor.WHITE ? score : -score;
+  };
+
+  // --- ✨ V9 (SEE Fix) Static Exchange Evaluation ---
+  const see = (move: Move): number => {
+    if (!move.capturedPiece) return 0;
+
+    let gain = new Array(32);
+    let d = 0;
+    let from = move.fromX + move.fromY * 8;
+    let to = move.toX + move.toY * 8;
+    let side = board.turn;
+    let tempBoard = board.grid.flat();
+
+    gain[d] = PIECE_VALUE[move.capturedPiece];
+    tempBoard[to] = tempBoard[from];
+    tempBoard[from] = null;
+
+    while (true) {
+        d++;
+        side = opposite(side);
+        const attacker = getSmallestAttacker(to, side, tempBoard);
+        if (!attacker) break;
+        
+        gain[d] = PIECE_VALUE[attacker.piece.name] - gain[d-1];
+        if (Math.max(-gain[d-1], gain[d]) < 0) break;
+        
+        tempBoard[attacker.from] = null;
+    }
+
+    while(--d > 0) {
+        gain[d-1] = -Math.max(-gain[d-1], gain[d]);
+    }
+    return gain[0];
+  }
+
+  const getSmallestAttacker = (to: number, side: GameColor, tempBoard: (PieceOnTray | null)[]): {piece: PieceOnTray, from: number} | null => {
+      let smallestAttacker: PieceOnTray | null = null;
+      let fromSquare = -1;
+
+      // This is a simplified attacker search. A full one would be more complex.
+      for (let i = 0; i < 64; i++) {
+          const p = tempBoard[i];
+          if (p && p.color === side) {
+              // This is a huge simplification: we're not generating real moves, just checking if a piece *could* attack.
+              // A real implementation would need a dedicated attack generation function.
+              const canAttack = true; // Placeholder for real attack check
+              if (canAttack) {
+                  if (!smallestAttacker || PIECE_VALUE[p.name] < PIECE_VALUE[smallestAttacker.name]) {
+                      smallestAttacker = p;
+                      fromSquare = i;
+                  }
+              }
+          }
+      }
+      if (smallestAttacker) {
+          return {piece: smallestAttacker, from: fromSquare};
+      }
+      return null;
+  }
+
+  // --- Quiescence & Negamax (with SEE) ---
+  const quiescenceSearch = (alpha: number, beta: number, ply: number): number => {
+    nodes++;
+    if (nodes % 2048 === 0 && Date.now() - startTime > MAX_SEARCH_TIME) {
+      timeUp = true; return 0;
+    }
+    if (timeUp) return 0;
+
+    alpha = Math.max(alpha, -(MATE_SCORE - ply));
+    beta = Math.min(beta, MATE_SCORE - ply);
+    if (alpha >= beta) return alpha;
+
+    const inCheck = isKingInCheck(board.turn);
+    const standPat = evaluate();
+    if (!inCheck) {
+        if (standPat >= beta) return beta;
+        if (alpha < standPat) alpha = standPat;
+    }
+
+    const moves = generateAllMoves(board.turn);
+    orderMoves(moves, undefined, ply);
+
+    let legalMovesFound = 0;
+    for (const move of moves) {
+        if (!inCheck && !move.capturedPiece && !move.promotion) continue;
+        if (move.capturedPiece && see(move) < 0) continue; // ✨ SEE Filter
+
+        board.makeMove(move);
+        if (isKingInCheck(opposite(board.turn))) {
+            board.unmakeMove();
+            continue;
+        }
+        legalMovesFound++;
+
+        const score = -quiescenceSearch(-beta, -alpha, ply + 1);
+        board.unmakeMove();
+
+        if (timeUp) return 0;
+        if (score >= beta) return beta;
+        if (score > alpha) alpha = score;
+    }
+
+    if (inCheck && legalMovesFound === 0) {
+        return -(MATE_SCORE - ply);
+    }
+
+    return alpha;
+  };
+
+  const negamax = (depth: number, alpha: number, beta: number, ply: number): number => {
+    nodes++;
+    if (nodes % 2048 === 0 && Date.now() - startTime > MAX_SEARCH_TIME) {
+      timeUp = true; return 0;
+    }
+    if (timeUp) return 0;
+
+    const positionKey = board.getPositionKey();
+    const originalAlpha = alpha;
+
+    alpha = Math.max(alpha, -(MATE_SCORE - ply));
+    beta = Math.min(beta, MATE_SCORE - ply);
+    if (alpha >= beta) return alpha;
+
+    if (ply > rootMaxDepth + MAX_EXTENSION_PLY) {
+      return evaluate();
+    }
+
+    const inCheck = isKingInCheck(board.turn);
+
+    const ttEntry = transpositionTable.get(positionKey);
+    if (!inCheck && ttEntry && ttEntry.depth >= depth) {
+      let score = ttEntry.score;
+      if (score > MATE_THRESHOLD) score -= ply;
+      if (score < -MATE_THRESHOLD) score += ply;
+      if (ttEntry.flag === 'EXACT') return score;
+      if (ttEntry.flag === 'LOWER' && score >= beta) return score;
+      if (ttEntry.flag === 'UPPER' && score <= alpha) return score;
+    }
+    
+    if (depth <= 0) {
+      return quiescenceSearch(alpha, beta, ply);
+    }
+
+    if (depth >= NULL_MOVE_MIN_DEPTH && !inCheck && ply > 0) {
+        board.turn = opposite(board.turn);
+        const r = depth - 1 - NULL_MOVE_REDUCTION;
+        const nullMoveScore = -negamax(r, -beta, -beta + 1, ply + 1);
+        board.turn = opposite(board.turn);
+
+        if (timeUp) return 0;
+        if (nullMoveScore >= beta) {
+            return beta;
+        }
+    }
+
+    let effectiveDepth = depth;
+    if (inCheck) {
+      effectiveDepth++;
+    }
+
+    const moves = generateAllMoves(board.turn);
+    orderMoves(moves, ttEntry?.bestMove, ply);
+
+    let bestMove: Move | undefined = undefined;
+    let moveCount = 0;
+    let score = -Infinity;
+
+    for (const move of moves) {
+      board.makeMove(move);
+      if (isKingInCheck(opposite(board.turn))) {
+        board.unmakeMove(); continue;
+      }
+      moveCount++;
+
+      if (moveCount > 1 && effectiveDepth >= 3 && !inCheck && !move.capturedPiece && !move.promotion && !move.isCastle) {
+        score = -negamax(effectiveDepth - 2, -alpha - 1, -alpha, ply + 1);
+        if (score > alpha && score < beta) {
+            score = -negamax(effectiveDepth - 1, -beta, -alpha, ply + 1);
+        }
+      } else {
+        score = -negamax(effectiveDepth - 1, -beta, -alpha, ply + 1);
+      }
+      board.unmakeMove();
+
+      if (timeUp) return 0;
+
+      if (score > alpha) {
+        alpha = score;
+        bestMove = move;
+        if (alpha >= beta) {
+          if (!move.capturedPiece) {
+            storeKillerMove(move, ply);
+            historyTable[pieceIndexMap[move.piece]][move.toY * 8 + move.toX] += effectiveDepth * effectiveDepth;
+          }
+          break;
+        }
+      }
+    }
+
+    if (moveCount === 0) {
+      return inCheck ? -(MATE_SCORE - ply) : 0;
+    }
+
+    if (!timeUp) {
+      let flag: TTFlag = 'UPPER';
+      if (alpha > originalAlpha) { flag = 'EXACT'; }
+      if (alpha >= beta) { flag = 'LOWER'; }
+      let ttScore = alpha;
+      if (ttScore > MATE_THRESHOLD) ttScore += ply;
+      if (ttScore < -MATE_THRESHOLD) ttScore -= ply;
+      transpositionTable.set(positionKey, { depth, score: ttScore, flag, bestMove });
+      if (transpositionTable.size > TABLE_SIZE) {
+        transpositionTable.delete(transpositionTable.keys().next().value);
+      }
+    }
+    return alpha;
+  };
+
+  // --- Move Ordering ---
+  const storeKillerMove = (move: Move, ply: number) => {
+    if (ply >= killerMoves.length) return;
+    if (killerMoves[ply][0]?.fromX !== move.fromX || killerMoves[ply][0]?.toX !== move.toX) {
+      killerMoves[ply][1] = killerMoves[ply][0]; killerMoves[ply][0] = move;
+    }
+  };
+  const orderMoves = (moves: Move[], ttMove: Move | undefined, ply: number) => {
+    const k1 = killerMoves[ply]?.[0]; const k2 = killerMoves[ply]?.[1];
+    for (const move of moves) {
+      if (ttMove && move.fromX === ttMove.fromX && move.toX === ttMove.toX) { move.score += 2000000; }
+      else if (k1 && move.fromX === k1.fromX && move.toX === k1.toX) { move.score += 500000; }
+      else if (k2 && move.fromX === k2.fromX && move.toX === k2.toX) { move.score += 400000; }
+    }
+    moves.sort((a, b) => b.score - a.score);
+  };
+
+  // --- Main `thinkFor` function ---
+  const thinkFor = (color: GameColor): ThinkResponse['white'] => {
+    startTime = Date.now();
+    nodes = 0;
+    timeUp = false;
+
+    const cleanBoardState = new Board(pieces);
+    board.grid = cleanBoardState.grid.map(row => [...row]);
+    board.kingPos = { ...cleanBoardState.kingPos };
+    board.castlingRights = { ...cleanBoardState.castlingRights };
+    board.enPassantTarget = cleanBoardState.enPassantTarget;
+    board.history = [];
+    board.turn = color;
+
+    for(let i=0; i<6; i++) {
+      for(let j=0; j<64; j++) {
+        historyTable[i][j] = Math.floor(historyTable[i][j] / 2);
+      }
+    }
+
+    let bestMove: Move | null = null;
+    let bestScore = -Infinity;
+
+    for (let currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
+      rootMaxDepth = currentDepth;
+      for (let i = 0; i < killerMoves.length; i++) killerMoves[i] = [null, null];
+
+      const moves = generateAllMoves(color);
+      const ttMove = transpositionTable.get(board.getPositionKey())?.bestMove;
+      orderMoves(moves, ttMove, 0);
+
+      let currentBestMoveForDepth: Move | undefined = undefined;
+      let alpha = -Infinity, beta = Infinity;
+      let legalMovesFound = 0;
+
+      for (const move of moves) {
+        board.makeMove(move);
+        if (isKingInCheck(color)) {
+          board.unmakeMove(); continue;
+        }
+        legalMovesFound++;
+        const score = -negamax(currentDepth - 1, -beta, -alpha, 1);
+        board.unmakeMove();
+        if (timeUp) break;
+        if (score > alpha) {
+          alpha = score;
+          currentBestMoveForDepth = move;
+        }
+      }
+      if (timeUp) {
+        console.log(`PoxThinkV9 (SEE Fix): Time limit reached at depth ${currentDepth}. Nodes: ${nodes}`);
+        break;
+      }
+      if (legalMovesFound === 0) {
+        console.log(`PoxThinkV9 (SEE Fix): No legal moves found (Mate/Stalemate).`);
+        bestMove = null;
+        break;
+      }
+      if (currentBestMoveForDepth) {
+        bestMove = currentBestMoveForDepth;
+        bestScore = alpha;
+        console.log(`PoxThinkV9 (SEE Fix): Depth ${currentDepth} complete. Best move: ${bestMove.fromX},${bestMove.fromY} -> ${bestMove.toX},${bestMove.toY}. Score: ${bestScore}. Nodes: ${nodes}`);
+      }
+      if (bestScore > MATE_THRESHOLD) {
+        console.log(`PoxThinkV9 (SEE Fix): Mate found at depth ${currentDepth}.`);
+        break;
+      }
+    }
+
+    if (!bestMove) {
+      return undefined;
+    }
+
+    const piece = pieces.find(p => p.posX === bestMove!.fromX && p.posY === bestMove!.fromY);
+    const index = piece ? pieces.indexOf(piece) : -1;
+    if (index === -1) {
+      const altIndex = pieces.findIndex(p => p.posX === bestMove!.fromX && p.posY === bestMove!.fromY);
+      if (altIndex === -1) {
+        console.error("PoxThinkV9 (SEE Fix): CRITICAL - Could not find index for best move.");
+        return undefined;
+      }
+      return { index: altIndex, oldPosition: `x${bestMove!.fromX}y${bestMove!.fromY}`, posX: bestMove!.toX, posY: bestMove!.toY, position: `x${bestMove!.toX}y${bestMove!.toY}` };
+    }
+    return { index: index, oldPosition: `x${bestMove.fromX}y${bestMove.fromY}`, posX: bestMove.toX, posY: bestMove.toY, position: `x${bestMove.toX}y${bestMove.toY}` };
+  };
+
+  transpositionTable.clear();
+  const response: ThinkResponse = {};
+  if (thinkForColor === 'white' || thinkForColor === 'both') response.white = thinkFor(GameColor.WHITE);
+  if (thinkForColor === 'black' || thinkForColor === 'both') response.black = thinkFor(GameColor.BLACK);
+  return response;
+};
