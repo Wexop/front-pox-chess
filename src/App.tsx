@@ -6,7 +6,7 @@ import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
 import { fenToPieces } from "./core/fen.ts"
-import { PoxThinkV6 } from "./PoxThink/poxThinkV6.ts"
+import { PoxThinkV7 } from "./PoxThink/poxThinkV7.ts"
 
 
 function App() {
@@ -88,7 +88,7 @@ function App() {
     setIsThinking(true)
     const newThink = await new Promise<ThinkResponse>((resolve) => {
       setTimeout(() => {
-        const result = PoxThinkV6(pieces, depth, thinkFor);
+        const result = PoxThinkV7(pieces, depth, thinkFor);
         resolve(result);
       });
     });
