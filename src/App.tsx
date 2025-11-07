@@ -14,7 +14,7 @@ function App() {
   const [piecesOnTray, setPiecesOnTray] = useState<PieceOnTray[]>(defaultValues)
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
   const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
-  const [deepth, setDeepth] = useState<number>(7)
+  const [deepth, setDeepth] = useState<number>(3)
   const [fen, setFen] = useState<string>("")
   const [autoLoop, setAutoLoop] = useState<boolean>(false)
   const [thinkForColor, setThinkForColor] = useState<'white' | 'black' | 'both'>('both');
