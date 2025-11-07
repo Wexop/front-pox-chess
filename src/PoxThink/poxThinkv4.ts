@@ -2,8 +2,8 @@ import { GameColor, type Movement, PieceName, type PieceOnTray, type ThinkRespon
 
 // --- CONFIGURATION ---
 const MAX_SEARCH_TIME = 2500; // milliseconds
-const BEAM_WIDTH = 5; // Number of best moves to explore at each node
-const CHECK_EXTENSION_DEPTH = 1; // How many extra plies to search when in check
+const BEAM_WIDTH = 7;
+const CHECK_EXTENSION_DEPTH = 1;
 
 // --- PIECE VALUES & EVALUATION TABLES ---
 const PIECE_VALUE: Record<PieceName, number> = {
@@ -13,6 +13,15 @@ const PIECE_VALUE: Record<PieceName, number> = {
   tour: 500,
   queen: 900,
   king: 20000
+}
+
+const ATTACK_VALUE: Record<PieceName, number> = {
+    pion: 1,
+    cavalier: 2,
+    fou: 2,
+    tour: 4,
+    queen: 8,
+    king: 0
 }
 
 const pawnEvalWhite = [
@@ -27,30 +36,10 @@ const pawnEvalWhite = [
 ];
 const pawnEvalBlack = pawnEvalWhite.slice().reverse();
 
-const knightEval = [
-    [-50,-40,-30,-30,-30,-30,-40,-50],[-40,-20,  0,  5,  5,  0,-20,-40],[-30,  5, 10, 15, 15, 10,  5,-30],[-30,  0, 15, 20, 20, 15,  0,-30],[-30,  5, 15, 20, 20, 15,  5,-30],[-30,  0, 10, 15, 15, 10,  0,-30],[-40,-20,  0,  0,  0,  0,-20,-40],[-50,-40,-30,-30,-30,-30,-40,-50]
-];
-
-const bishopEvalWhite = [
-    [-20,-10,-10,-10,-10,-10,-10,-20],[-10,  5,  0,  0,  0,  0,  5,-10],[-10, 10, 10, 10, 10, 10, 10,-10],[-10,  0, 10, 10, 10, 10,  0,-10],[-10,  5,  5, 10, 10,  5,  5,-10],[-10,  0,  5, 10, 10,  5,  0,-10],[-10,  0,  0,  0,  0,  0,  0,-10],[-20,-10,-10,-10,-10,-10,-10,-20]
-];
-const bishopEvalBlack = bishopEvalWhite.slice().reverse();
-
-const rookEvalWhite = [
-    [0,  0,  0,  5,  5,  0,  0,  0],[-5,  0,  0,  0,  0,  0,  0, -5],[-5,  0,  0,  0,  0,  0,  0, -5],[-5,  0,  0,  0,  0,  0,  0, -5],[-5,  0,  0,  0,  0,  0,  0, -5],[-5,  0,  0,  0,  0,  0,  0, -5],[5, 10, 10, 10, 10, 10, 10,  5],[0,  0,  0,  0,  0,  0,  0,  0]
-];
-const rookEvalBlack = rookEvalWhite.slice().reverse();
-
-const kingEvalWhite = [
-    [20, 30, 10,  0,  0, 10, 30, 20],[20, 20,  0,  0,  0,  0, 20, 20],[-10,-20,-20,-20,-20,-20,-20,-10],[-20,-30,-30,-40,-40,-30,-30,-20],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30]
-];
-const kingEvalBlack = kingEvalWhite.slice().reverse();
-
 // --- CORE LOGIC ---
 const inside = (x: number, y: number) => x >= 0 && x < 8 && y >= 0 && y < 8;
 const opposite = (color: GameColor) => color === GameColor.WHITE ? GameColor.BLACK : GameColor.WHITE;
 
-// Transposition Table to store evaluated positions
 const transpositionTable = new Map<string, { score: number, depth: number }>();
 
 const generatePositionKey = (pieces: PieceOnTray[]): string => {
@@ -156,7 +145,8 @@ export const getPieceMovement = (piece: PieceName, color: GameColor, pieces: Pie
     .map(m => ({ position: `x${m.posX}y${m.posY}`, ...m }))
 }
 
-const getAllMovesForColor = (pieces: PieceOnTray[], color: GameColor) => {
+// V4 REVISED: MVV-LVA move ordering
+const getAllMovesForColor = (pieces: PieceOnTray[], color: GameColor, capturesOnly = false) => {
     const moves: { fromIndex: number; toX: number; toY: number, score: number }[] = [];
     for (let i = 0; i < pieces.length; i++) {
         const p = pieces[i];
@@ -165,9 +155,12 @@ const getAllMovesForColor = (pieces: PieceOnTray[], color: GameColor) => {
         const movement = getPieceMovement(p.name, color, pieces, p.posX, p.posY);
         for (const m of movement) {
             const targetPiece = pieces.find(target => target.posX === m.posX && target.posY === m.posY);
+            if (capturesOnly && !targetPiece) continue;
+
             let score = 0;
             if (targetPiece) {
-                score = 10 * PIECE_VALUE[targetPiece.name] - PIECE_VALUE[p.name];
+                // MVV-LVA: Most Valuable Victim - Least Valuable Attacker
+                score = PIECE_VALUE[targetPiece.name] - PIECE_VALUE[p.name] + 1000;
             }
             moves.push({ fromIndex: i, toX: m.posX, toY: m.posY, score });
         }
@@ -179,45 +172,100 @@ const isKingInCheck = (pieces: PieceOnTray[], color: GameColor) => {
     const king = pieces.find(p => p.name === PieceName.king && p.color === color);
     if (!king) return true;
     const enemyColor = opposite(color);
-    const enemyMoves = getAllMovesForColor(pieces, enemyColor);
-    for (const m of enemyMoves) {
-        if (m.toX === king.posX && m.toY === king.posY) return true;
+    const enemyPieces = pieces.filter(p => p.color === enemyColor);
+
+    for (const p of enemyPieces) {
+        const moves = getPieceMovement(p.name, p.color, pieces, p.posX, p.posY);
+        if (moves.some(m => m.posX === king.posX && m.posY === king.posY)) return true;
     }
     return false;
 };
 
+// V4 REVISED: Evaluation with King Safety and Pawn Shield
 const getTrayScoreV4 = (pieces: PieceOnTray[], color: GameColor) => {
     let score = 0;
-    let myKing: PieceOnTray | undefined;
+    const myKing = pieces.find(p => p.name === PieceName.king && p.color === color);
+    const opponentKing = pieces.find(p => p.name === PieceName.king && p.color === opposite(color));
 
+    if (!myKing) return -99999;
+    if (!opponentKing) return 99999;
+
+    // Material and positional score
     for (const p of pieces) {
         const value = PIECE_VALUE[p.name] + (p.color === GameColor.WHITE ? pawnEvalWhite[p.posY][p.posX] : pawnEvalBlack[p.posY][p.posX]);
         score += p.color === color ? value : -value;
-        if (p.name === PieceName.king && p.color === color) {
-            myKing = p;
-        }
     }
 
-    if (myKing) {
-        const enemyMoves = getAllMovesForColor(pieces, opposite(color));
-        let attackers = 0;
-        for (const move of enemyMoves) {
-            const dx = Math.abs(myKing.posX - move.toX);
-            const dy = Math.abs(myKing.posY - move.toY);
-            if (dx <= 2 && dy <= 2) { 
-                attackers++;
+    // King safety evaluation
+    let myKingThreats = 0;
+    const enemyPieces = pieces.filter(p => p.color === opposite(color));
+    
+    for (const enemy of enemyPieces) {
+        const moves = getPieceMovement(enemy.name, enemy.color, pieces, enemy.posX, enemy.posY);
+        for (const move of moves) {
+            const dx = Math.abs(myKing.posX - move.posX);
+            const dy = Math.abs(myKing.posY - move.posY);
+            if (dx <= 1 && dy <= 1) {
+                myKingThreats += ATTACK_VALUE[enemy.name];
             }
         }
-        score -= attackers * 10; 
     }
+    score -= myKingThreats * myKingThreats * 10;
+
+    // Pawn shield evaluation
+    const myPawns = pieces.filter(p => p.name === PieceName.pion && p.color === color);
+    let pawnShieldScore = 0;
+    const kingRank = myKing.posY;
+    const kingFile = myKing.posX;
+    const pawnShieldRanks = color === GameColor.WHITE ? [kingRank - 1, kingRank - 2] : [kingRank + 1, kingRank + 2];
+    
+    for (const pawn of myPawns) {
+        if (pawnShieldRanks.includes(pawn.posY) && Math.abs(pawn.posX - kingFile) <= 1) {
+            pawnShieldScore += 10;
+        }
+    }
+    score += pawnShieldScore;
 
     return score;
 };
 
-const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: number, currentColor: GameColor, maximizingColor: GameColor, startTime: number): number => {
-    if (Date.now() - startTime > MAX_SEARCH_TIME) {
-        return 0; 
+// V4 REVISED: Quiescence Search with SEE-lite
+const quiescenceSearch = (pieces: PieceOnTray[], alpha: number, beta: number, currentColor: GameColor, maximizingColor: GameColor, startTime: number): number => {
+    if (Date.now() - startTime > MAX_SEARCH_TIME) return 0;
+
+    const standPat = getTrayScoreV4(pieces, maximizingColor);
+    if (standPat >= beta) return beta;
+    if (alpha < standPat) alpha = standPat;
+
+    const moves = getAllMovesForColor(pieces, currentColor, true); // Captures only
+
+    for (const m of moves) {
+        const newPieces = applyMove(pieces, m);
+        if (isKingInCheck(newPieces, currentColor)) continue;
+
+        // SEE-lite: Check for immediate recapture
+        const recaptures = getAllMovesForColor(newPieces, opposite(currentColor), true);
+        let isBadExchange = false;
+        for (const recap of recaptures) {
+            if (recap.toX === m.toX && recap.toY === m.toY) {
+                const recapturedValue = PIECE_VALUE[pieces[m.fromIndex].name];
+                if (recapturedValue > PIECE_VALUE[pieces.find(p=>p.posX === m.toX && p.posY === m.toY)!.name]) {
+                    isBadExchange = true;
+                    break;
+                }
+            }
+        }
+        if (isBadExchange) continue; // Skip this greedy move
+
+        const score = -quiescenceSearch(newPieces, -beta, -alpha, opposite(currentColor), maximizingColor, startTime);
+        if (score >= beta) return beta;
+        if (score > alpha) alpha = score;
     }
+    return alpha;
+}
+
+const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: number, currentColor: GameColor, maximizingColor: GameColor, startTime: number): number => {
+    if (Date.now() - startTime > MAX_SEARCH_TIME) return 0;
 
     const positionKey = generatePositionKey(pieces);
     const cached = transpositionTable.get(positionKey);
@@ -225,51 +273,38 @@ const minimaxV4 = (pieces: PieceOnTray[], depth: number, alpha: number, beta: nu
         return cached.score;
     }
 
+    if (depth === 0) {
+        return quiescenceSearch(pieces, alpha, beta, currentColor, maximizingColor, startTime);
+    }
+
     let currentDepth = depth;
     if (isKingInCheck(pieces, currentColor)) {
         currentDepth += CHECK_EXTENSION_DEPTH;
     }
 
-    if (currentDepth <= 0) {
-        return getTrayScoreV4(pieces, maximizingColor);
-    }
-
     const moves = getAllMovesForColor(pieces, currentColor);
     if (moves.length === 0) {
-        if (isKingInCheck(pieces, currentColor)) return -99999 - depth; 
-        return 0; 
+        if (isKingInCheck(pieces, currentColor)) return -99999 - depth;
+        return 0;
     }
 
     const movesToSearch = moves.slice(0, BEAM_WIDTH);
 
-    if (currentColor === maximizingColor) {
-        let best = -Infinity;
-        for (const m of movesToSearch) {
-            const newPieces = applyMove(pieces, m);
-            if (isKingInCheck(newPieces, maximizingColor)) continue;
-            const val = minimaxV4(newPieces, currentDepth - 1, alpha, beta, opposite(currentColor), maximizingColor, startTime);
-            best = Math.max(best, val);
-            alpha = Math.max(alpha, val);
-            if (beta <= alpha) break;
-        }
-        transpositionTable.set(positionKey, { score: best, depth });
-        return best;
-    } else {
-        let best = Infinity;
-        for (const m of movesToSearch) {
-            const newPieces = applyMove(pieces, m);
-            if (isKingInCheck(newPieces, currentColor)) continue;
-            const val = minimaxV4(newPieces, currentDepth - 1, alpha, beta, opposite(currentColor), maximizingColor, startTime);
-            best = Math.min(best, val);
-            beta = Math.min(beta, val);
-            if (beta <= alpha) break;
-        }
-        transpositionTable.set(positionKey, { score: best, depth });
-        return best;
+    let best = -Infinity;
+    for (const m of movesToSearch) {
+        const newPieces = applyMove(pieces, m);
+        if (isKingInCheck(newPieces, currentColor)) continue;
+        const val = -minimaxV4(newPieces, currentDepth - 1, -beta, -alpha, opposite(currentColor), maximizingColor, startTime);
+        if (val > best) best = val;
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break;
     }
+
+    transpositionTable.set(positionKey, { score: best, depth });
+    return best;
 };
 
-export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5, thinkForColor: 'white' | 'black' | 'both' = 'both'): ThinkResponse => {
+export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 7, thinkForColor: 'white' | 'black' | 'both' = 'both'): ThinkResponse => {
     const thinkFor = (color: GameColor) => {
         const startTime = Date.now();
         let bestMove: any = null;
@@ -287,7 +322,7 @@ export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5, thinkForColor: '
                 const newPieces = applyMove(pieces, m);
                 if (isKingInCheck(newPieces, color)) continue;
 
-                const score = minimaxV4(newPieces, depth - 1, -Infinity, Infinity, opposite(color), color, startTime);
+                const score = -minimaxV4(newPieces, depth - 1, -Infinity, Infinity, opposite(color), color, startTime);
                 
                 if (score > currentBestScoreForDepth) {
                     currentBestScoreForDepth = score;
@@ -318,7 +353,7 @@ export const PoxThinkV4 = (pieces: PieceOnTray[], maxDepth = 5, thinkForColor: '
     if (thinkForColor === 'white' || thinkForColor === 'both') {
         response.white = thinkFor(GameColor.WHITE);
     }
-    if (thinkForColor === 'black' || thinkForColor === 'both') {
+    if (thinkForColor === 'black' | thinkForColor === 'both') {
         response.black = thinkFor(GameColor.BLACK);
     }
     return response;

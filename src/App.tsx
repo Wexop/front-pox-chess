@@ -1,4 +1,4 @@
-import { Button, Group, NumberInput, SegmentedControl, Stack, TextInput } from "@mantine/core"
+import { Button, Group, Loader, NumberInput, SegmentedControl, Stack, TextInput } from "@mantine/core"
 import "./App.css"
 import { useEffect, useState } from "react"
 import { type Piece, type PieceOnTray, type ThinkResponse } from "./core/type.ts"
@@ -6,7 +6,7 @@ import { allBlackPieces, allWhitePieces } from "./core/utils.tsx"
 import { IconTrash } from "@tabler/icons-react"
 import { defaultValues } from "./core/defaultValues.tsx"
 import { fenToPieces } from "./core/fen.ts"
-import { PoxThinkV4 } from "./PoxThink/poxThinkv4.ts"
+import { PoxThinkV6 } from "./PoxThink/poxThinkV6.ts"
 
 
 function App() {
@@ -14,10 +14,11 @@ function App() {
   const [piecesOnTray, setPiecesOnTray] = useState<PieceOnTray[]>(defaultValues)
   const [pieceSelected, setPieceSelected] = useState<Piece | undefined>(undefined)
   const [think, setThink] = useState<ThinkResponse | undefined>(undefined)
-  const [deepth, setDeepth] = useState<number>(5) // Default to a higher depth for V4
+  const [deepth, setDeepth] = useState<number>(7)
   const [fen, setFen] = useState<string>("")
   const [autoLoop, setAutoLoop] = useState<boolean>(false)
   const [thinkForColor, setThinkForColor] = useState<'white' | 'black' | 'both'>('both');
+  const [isThinkin, setIsThinking] = useState<boolean>(false)
 
   const getFen = async () => {
     const res = await fetch('http://localhost:4000/fen');
@@ -84,12 +85,15 @@ function App() {
   }
 
   const doThinkAsync = async (pieces: PieceOnTray[], depth: number, thinkFor: 'white' | 'black' | 'both') => {
-    return new Promise<ThinkResponse>((resolve) => {
+    setIsThinking(true)
+    const newThink = await new Promise<ThinkResponse>((resolve) => {
       setTimeout(() => {
-        const result = PoxThinkV4(pieces, depth, thinkFor);
+        const result = PoxThinkV6(pieces, depth, thinkFor);
         resolve(result);
       });
     });
+    setIsThinking(false)
+    return newThink
   };
 
   return (
@@ -113,6 +117,7 @@ function App() {
      </Stack>
 
      <Stack>
+       {isThinkin && <Loader/>}
         <Group>
             <TextInput value={fen} onChange={(event) => setFen(event.currentTarget.value)} placeholder="Enter FEN string" />
             <Button onClick={() => loadFen()}>Load FEN</Button>
